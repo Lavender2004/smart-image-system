@@ -1,0 +1,26 @@
+services:
+  # MySQL 8.0: 核心数据库
+  db:
+    image: mysql:8.0
+    container_name: sims_mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: image_db
+      MYSQL_USER: sims_user
+      MYSQL_PASSWORD: sims_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - ./storage/mysql_data:/var/lib/mysql
+    command: --default-authentication-plugin=mysql_native_password
+
+  # Redis 7.0: 缓存与消息队列
+  redis:
+    image: redis:7.0
+    container_name: sims_redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./storage/redis_data:/data
