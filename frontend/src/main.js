@@ -1,15 +1,11 @@
 import { createApp } from 'vue'
 import Vant from 'vant'
-
-// 引入 Vant 的样式文件 (非常重要，否则组件没有颜色)
 import 'vant/lib/index.css'
-
 import './style.css'
 import App from './App.vue'
+import router from './router' // 新增
 
 const app = createApp(App)
-
-// 启用 Vant
 app.use(Vant)
-
+app.use(router) // 新增
 app.mount('#app')

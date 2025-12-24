@@ -1,23 +1,19 @@
 from pydantic import BaseModel, EmailStr
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List  # 新增了 List
 
 # =======================
 # 用户相关模型
 # =======================
-
-# 注册时的请求体
 class UserCreate(BaseModel):
     username: str
     email: EmailStr
     password: str
 
-# 登录后的响应体 (Token)
 class Token(BaseModel):
     access_token: str
     token_type: str
 
-# 返回给前端的用户信息 (不包含密码)
 class UserResponse(BaseModel):
     id: int
     username: str
@@ -27,12 +23,21 @@ class UserResponse(BaseModel):
     class Config:
         from_attributes = True
 
+# =======================
+# 标签模型 (Week 3 新增)
+# =======================
+class TagBase(BaseModel):
+    name: str
+
+class TagResponse(TagBase):
+    id: int
+
+    class Config:
+        from_attributes = True
 
 # =======================
-# 图片相关模型 (新增)
+# 图片相关模型
 # =======================
-
-# 图片响应模型
 class ImageResponse(BaseModel):
     id: int
     filename: str
@@ -43,6 +48,9 @@ class ImageResponse(BaseModel):
     height: Optional[int] = None
     created_at: datetime
     owner_id: int
+    
+    # 【新增】返回图片时，顺便带上它拥有的标签
+    tags: List[TagResponse] = [] 
 
     class Config:
         from_attributes = True
