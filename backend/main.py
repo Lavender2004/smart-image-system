@@ -1,13 +1,12 @@
+import os  # 【新增】用于删除物理文件
 from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import OAuth2PasswordRequestForm
-# 【修改1】引入 CORS 中间件
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from datetime import timedelta
 from typing import List, Optional
 
-# 导入我们可以复用的模块
 from . import models, schemas, security, database, utils
 
 # 自动建表
@@ -15,24 +14,20 @@ models.Base.metadata.create_all(bind=database.engine)
 
 app = FastAPI(title="Smart Image System")
 
-# ===============================
-# 【修改2】配置 CORS (解决跨域报错)
-# ===============================
+# CORS 配置
 app.add_middleware(
     CORSMiddleware,
-    # 允许的来源列表。为了方便开发，这里允许所有IP ("*")
-    # 如果想更安全，可以改成 ["http://localhost:5173", "http://192.168.126.130:5173"]
     allow_origins=["*"],  
     allow_credentials=True,
-    allow_methods=["*"],  # 允许所有方法 (GET, POST, PUT, DELETE...)
-    allow_headers=["*"],  # 允许所有请求头
+    allow_methods=["*"],  
+    allow_headers=["*"],  
 )
 
 # 挂载静态文件
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # =======================
-# 认证接口 (Week 1)
+# 认证接口
 # =======================
 
 @app.post("/api/v1/auth/register", response_model=schemas.UserResponse)
@@ -73,7 +68,7 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
 
 
 # =======================
-# 图片接口 (Week 2 & 3)
+# 图片核心接口
 # =======================
 
 @app.post("/api/v1/upload", response_model=schemas.ImageResponse)
@@ -106,26 +101,16 @@ def upload_image(
     
     return db_image
 
-# 【Week 3 升级】支持通过 tag 搜索图片
 @app.get("/api/v1/images", response_model=List[schemas.ImageResponse])
 def get_my_images(
-    tag: Optional[str] = Query(None, description="通过标签名筛选图片"),
+    tag: Optional[str] = Query(None, description="通过标签名筛选"),
     current_user: models.User = Depends(security.get_current_user),
     db: Session = Depends(database.get_db)
 ):
-    # 1. 基础查询：查出属于当前用户的所有图片
     query = db.query(models.Image).filter(models.Image.owner_id == current_user.id)
-    
-    # 2. 如果用户传了 tag 参数，就加一个筛选条件
     if tag:
-        # any() 表示：这张图片的 tags 列表里，有没有任意一个 tag 的名字等于查询词
         query = query.filter(models.Image.tags.any(models.Tag.name == tag))
-    
     return query.all()
-
-# =======================
-# 标签接口 (Week 3 新增)
-# =======================
 
 @app.post("/api/v1/images/{image_id}/tags", response_model=schemas.ImageResponse)
 def add_tag_to_image(
@@ -134,7 +119,6 @@ def add_tag_to_image(
     current_user: models.User = Depends(security.get_current_user),
     db: Session = Depends(database.get_db)
 ):
-    # 1. 检查图片是否存在，且是否属于当前用户
     image = db.query(models.Image).filter(
         models.Image.id == image_id, 
         models.Image.owner_id == current_user.id
@@ -143,8 +127,6 @@ def add_tag_to_image(
     if not image:
         raise HTTPException(status_code=404, detail="Image not found")
 
-    # 2. 检查标签是否已存在，不存在则自动创建 (智能处理)
-    # 注意：我们用 strip() 去除首尾空格，用 lower() 统一转小写，避免 "Cat" 和 "cat" 重复
     clean_tag_name = tag_name.strip().lower()
     tag = db.query(models.Tag).filter(models.Tag.name == clean_tag_name).first()
     
@@ -154,10 +136,41 @@ def add_tag_to_image(
         db.commit()
         db.refresh(tag)
     
-    # 3. 给图片贴标签 (如果还没贴过)
     if tag not in image.tags:
         image.tags.append(tag)
         db.commit()
         db.refresh(image)
         
     return image
+
+# 【Week 4 新增】删除图片接口
+@app.delete("/api/v1/images/{image_id}", status_code=204)
+def delete_image(
+    image_id: int,
+    current_user: models.User = Depends(security.get_current_user),
+    db: Session = Depends(database.get_db)
+):
+    # 1. 查数据库，确保是自己的图
+    image = db.query(models.Image).filter(
+        models.Image.id == image_id,
+        models.Image.owner_id == current_user.id
+    ).first()
+
+    if not image:
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    # 2. 尝试删除物理文件 (原图 + 缩略图)
+    # 使用 try-except 防止因为文件不存在而报错导致数据库删不掉
+    try:
+        if os.path.exists(image.file_path):
+            os.remove(image.file_path)
+        if image.thumbnail_path and os.path.exists(image.thumbnail_path):
+            os.remove(image.thumbnail_path)
+    except Exception as e:
+        print(f"Error deleting file: {e}")
+
+    # 3. 删除数据库记录
+    db.delete(image)
+    db.commit()
+    
+    return None
