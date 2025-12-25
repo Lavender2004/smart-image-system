@@ -1,5 +1,5 @@
-import os  # 【新增】用于删除物理文件
-from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Query
+import os
+from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Query, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,7 +14,7 @@ models.Base.metadata.create_all(bind=database.engine)
 
 app = FastAPI(title="Smart Image System")
 
-# CORS 配置
+# 1. 标准 CORS 配置 (处理 API 请求)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  
@@ -23,28 +23,32 @@ app.add_middleware(
     allow_headers=["*"],  
 )
 
+# 2. 【新增】强制中间件：确保静态文件也能跨域 (解决 Canvas 污染的关键)
+@app.middleware("http")
+async def add_cors_header(request: Request, call_next):
+    response = await call_next(request)
+    # 强制添加允许跨域头，防止浏览器拒绝 Canvas 读取图片数据
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    return response
+
 # 挂载静态文件
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # =======================
-# 认证接口
+# 1. 认证接口
 # =======================
 
 @app.post("/api/v1/auth/register", response_model=schemas.UserResponse)
 def register(user: schemas.UserCreate, db: Session = Depends(database.get_db)):
-    db_user = db.query(models.User).filter(models.User.email == user.email).first()
-    if db_user:
-        raise HTTPException(status_code=400, detail="Email already registered")
+    if db.query(models.User).filter(models.User.email == user.email).first():
+        raise HTTPException(status_code=400, detail="该邮箱已被注册")
     
-    db_username = db.query(models.User).filter(models.User.username == user.username).first()
-    if db_username:
-        raise HTTPException(status_code=400, detail="Username already taken")
+    if db.query(models.User).filter(models.User.username == user.username).first():
+        raise HTTPException(status_code=400, detail="该用户名已被占用")
 
     hashed_password = security.get_password_hash(user.password)
     new_user = models.User(
-        email=user.email,
-        username=user.username,
-        password_hash=hashed_password
+        email=user.email, username=user.username, password_hash=hashed_password
     )
     db.add(new_user)
     db.commit()
@@ -54,11 +58,8 @@ def register(user: schemas.UserCreate, db: Session = Depends(database.get_db)):
 @app.post("/api/v1/auth/login", response_model=schemas.Token)
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(database.get_db)):
     user = db.query(models.User).filter(models.User.username == form_data.username).first()
-    if not user:
-        raise HTTPException(status_code=400, detail="Incorrect username or password")
-    
-    if not security.verify_password(form_data.password, user.password_hash):
-        raise HTTPException(status_code=400, detail="Incorrect username or password")
+    if not user or not security.verify_password(form_data.password, user.password_hash):
+        raise HTTPException(status_code=400, detail="用户名或密码错误")
 
     access_token_expires = timedelta(minutes=security.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = security.create_access_token(
@@ -66,9 +67,8 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     )
     return {"access_token": access_token, "token_type": "bearer"}
 
-
 # =======================
-# 图片核心接口
+# 2. 图片上传
 # =======================
 
 @app.post("/api/v1/upload", response_model=schemas.ImageResponse)
@@ -78,12 +78,12 @@ def upload_image(
     db: Session = Depends(database.get_db)
 ):
     if not file.content_type.startswith("image/"):
-        raise HTTPException(400, detail="File must be an image")
+        raise HTTPException(400, detail="必须上传图片文件")
 
     try:
         image_info = utils.process_image(file)
     except Exception as e:
-        raise HTTPException(500, detail=f"Image processing failed: {str(e)}")
+        raise HTTPException(500, detail=f"图片处理失败: {str(e)}")
 
     db_image = models.Image(
         filename=image_info["filename"],
@@ -92,30 +92,72 @@ def upload_image(
         file_size=image_info["file_size"],
         width=image_info["width"],
         height=image_info["height"],
+        capture_date=image_info["capture_date"],
         owner_id=current_user.id
     )
     
     db.add(db_image)
     db.commit()
     db.refresh(db_image)
-    
     return db_image
+
+# =======================
+# 3. 图片查询 (支持排序)
+# =======================
 
 @app.get("/api/v1/images", response_model=List[schemas.ImageResponse])
 def get_my_images(
-    tag: Optional[str] = Query(None, description="通过标签名筛选"),
+    tag: Optional[str] = None,
+    sort_by: Optional[str] = Query("date_desc", description="排序: date_asc, date_desc, view_desc, name_asc"),
     current_user: models.User = Depends(security.get_current_user),
     db: Session = Depends(database.get_db)
 ):
     query = db.query(models.Image).filter(models.Image.owner_id == current_user.id)
+    
     if tag:
-        query = query.filter(models.Image.tags.any(models.Tag.name == tag))
+        query = query.filter(
+            (models.Image.tags.any(models.Tag.name.like(f"%{tag}%"))) |
+            (models.Image.filename.like(f"%{tag}%")) | 
+            (models.Image.location.like(f"%{tag}%")) |
+            (models.Image.category.like(f"%{tag}%"))
+        )
+    
+    if sort_by == "date_asc":
+        query = query.order_by(models.Image.capture_date.asc())
+    elif sort_by == "view_desc":
+        query = query.order_by(models.Image.view_count.desc())
+    elif sort_by == "name_asc":
+        query = query.order_by(models.Image.filename.asc())
+    else:
+        query = query.order_by(models.Image.capture_date.desc())
+        
     return query.all()
 
-@app.post("/api/v1/images/{image_id}/tags", response_model=schemas.ImageResponse)
-def add_tag_to_image(
+# =======================
+# 4. 图片详情 (浏览量 +1)
+# =======================
+@app.get("/api/v1/images/{image_id}", response_model=schemas.ImageResponse)
+def get_image_detail(
     image_id: int,
-    tag_name: str,
+    current_user: models.User = Depends(security.get_current_user),
+    db: Session = Depends(database.get_db)
+):
+    image = db.query(models.Image).filter(models.Image.id == image_id).first()
+    if not image:
+        raise HTTPException(404, detail="图片不存在")
+    
+    image.view_count += 1
+    db.commit()
+    db.refresh(image)
+    return image
+
+# =======================
+# 5. 图片修改 (元数据)
+# =======================
+@app.put("/api/v1/images/{image_id}", response_model=schemas.ImageResponse)
+def update_image_info(
+    image_id: int,
+    info: schemas.ImageUpdate,
     current_user: models.User = Depends(security.get_current_user),
     db: Session = Depends(database.get_db)
 ):
@@ -123,13 +165,54 @@ def add_tag_to_image(
         models.Image.id == image_id, 
         models.Image.owner_id == current_user.id
     ).first()
-    
     if not image:
-        raise HTTPException(status_code=404, detail="Image not found")
+        raise HTTPException(404, detail="图片不存在")
+
+    if info.filename: image.filename = info.filename
+    if info.location: image.location = info.location
+    if info.category: image.category = info.category
+    if info.capture_date: image.capture_date = info.capture_date
+    
+    db.commit()
+    db.refresh(image)
+    return image
+
+# =======================
+# 6. 删除标签
+# =======================
+@app.delete("/api/v1/images/{image_id}/tags/{tag_id}")
+def delete_tag_from_image(
+    image_id: int,
+    tag_id: int,
+    current_user: models.User = Depends(security.get_current_user),
+    db: Session = Depends(database.get_db)
+):
+    image = db.query(models.Image).filter(models.Image.id == image_id, models.Image.owner_id == current_user.id).first()
+    if not image: raise HTTPException(404, "图片不存在")
+    
+    tag = db.query(models.Tag).filter(models.Tag.id == tag_id).first()
+    if not tag: raise HTTPException(404, "标签不存在")
+    
+    if tag in image.tags:
+        image.tags.remove(tag)
+        db.commit()
+    return {"msg": "标签已移除"}
+
+# =======================
+# 7. 贴标签与删除图片
+# =======================
+@app.post("/api/v1/images/{image_id}/tags", response_model=schemas.ImageResponse)
+def add_tag_to_image(
+    image_id: int,
+    tag_name: str,
+    current_user: models.User = Depends(security.get_current_user),
+    db: Session = Depends(database.get_db)
+):
+    image = db.query(models.Image).filter(models.Image.id == image_id, models.Image.owner_id == current_user.id).first()
+    if not image: raise HTTPException(404, detail="Image not found")
 
     clean_tag_name = tag_name.strip().lower()
     tag = db.query(models.Tag).filter(models.Tag.name == clean_tag_name).first()
-    
     if not tag:
         tag = models.Tag(name=clean_tag_name)
         db.add(tag)
@@ -140,37 +223,22 @@ def add_tag_to_image(
         image.tags.append(tag)
         db.commit()
         db.refresh(image)
-        
     return image
 
-# 【Week 4 新增】删除图片接口
 @app.delete("/api/v1/images/{image_id}", status_code=204)
 def delete_image(
     image_id: int,
     current_user: models.User = Depends(security.get_current_user),
     db: Session = Depends(database.get_db)
 ):
-    # 1. 查数据库，确保是自己的图
-    image = db.query(models.Image).filter(
-        models.Image.id == image_id,
-        models.Image.owner_id == current_user.id
-    ).first()
+    image = db.query(models.Image).filter(models.Image.id == image_id, models.Image.owner_id == current_user.id).first()
+    if not image: raise HTTPException(404, detail="Image not found")
 
-    if not image:
-        raise HTTPException(status_code=404, detail="Image not found")
-
-    # 2. 尝试删除物理文件 (原图 + 缩略图)
-    # 使用 try-except 防止因为文件不存在而报错导致数据库删不掉
     try:
-        if os.path.exists(image.file_path):
-            os.remove(image.file_path)
-        if image.thumbnail_path and os.path.exists(image.thumbnail_path):
-            os.remove(image.thumbnail_path)
-    except Exception as e:
-        print(f"Error deleting file: {e}")
+        if os.path.exists(image.file_path): os.remove(image.file_path)
+        if image.thumbnail_path and os.path.exists(image.thumbnail_path): os.remove(image.thumbnail_path)
+    except: pass
 
-    # 3. 删除数据库记录
     db.delete(image)
     db.commit()
-    
     return None

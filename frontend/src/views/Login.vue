@@ -1,7 +1,7 @@
 <script setup>
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
-import request from '../utils/request'; // 引入刚才写的管家
+import request from '../utils/request'; 
 import { showSuccessToast } from 'vant';
 
 const username = ref('');
@@ -10,14 +10,12 @@ const router = useRouter();
 
 const handleLogin = async () => {
   try {
-    // 发送登录请求 (格式要配合 OAuth2 的表单格式)
     const formData = new FormData();
     formData.append('username', username.value);
     formData.append('password', password.value);
 
     const res = await request.post('/api/v1/auth/login', formData);
     
-    // 登录成功：存 Token，跳主页
     localStorage.setItem('token', res.access_token);
     showSuccessToast('登录成功');
     router.push('/');
@@ -49,6 +47,14 @@ const handleLogin = async () => {
     <div style="margin: 20px;">
       <van-button round block type="primary" @click="handleLogin">
         登录
+      </van-button>
+
+      <van-button 
+        round block type="default" 
+        style="margin-top: 15px; border: none; background: transparent; color: #1989fa;" 
+        @click="router.push('/register')"
+      >
+        没有账号？去注册
       </van-button>
     </div>
   </div>

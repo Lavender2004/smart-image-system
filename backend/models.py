@@ -1,12 +1,11 @@
-from sqlalchemy import Boolean, Column, Integer, String, BigInteger, TIMESTAMP, ForeignKey, Table
+from sqlalchemy import Boolean, Column, Integer, String, BigInteger, TIMESTAMP, ForeignKey, Table, Text
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from .database import Base
 
 # =======================
-# 中间关联表 (多对多)
+# 中间关联表 (保持不变)
 # =======================
-# 这张表没有对应的类，它只负责连接 images 和 tags
 image_tags = Table(
     'image_tags',
     Base.metadata,
@@ -15,9 +14,8 @@ image_tags = Table(
 )
 
 # =======================
-# 数据模型类
+# 用户模型 (保持不变)
 # =======================
-
 class User(Base):
     __tablename__ = "users"
 
@@ -27,26 +25,23 @@ class User(Base):
     password_hash = Column(String(255), nullable=False)
     
     created_at = Column(TIMESTAMP, server_default=func.now())
-    last_login = Column(TIMESTAMP, nullable=True)
     is_active = Column(Boolean, default=True)
-    
-    storage_quota = Column(BigInteger, default=1073741824)
-    used_storage = Column(BigInteger, default=0)
 
-    # 关联关系
     images = relationship("Image", back_populates="owner")
 
-
+# =======================
+# 标签模型 (保持不变)
+# =======================
 class Tag(Base):
     __tablename__ = "tags"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    name = Column(String(50), unique=True, index=True, nullable=False) # 标签名不能重复
-
-    # 反向关联：通过 tags 可以查到有哪些图片
+    name = Column(String(50), unique=True, index=True, nullable=False)
     images = relationship("Image", secondary=image_tags, back_populates="tags")
 
-
+# =======================
+# 图片模型 (Week 4.5 重大升级)
+# =======================
 class Image(Base):
     __tablename__ = "images"
 
@@ -58,14 +53,19 @@ class Image(Base):
     
     width = Column(Integer, nullable=True)
     height = Column(Integer, nullable=True)
-    camera_model = Column(String(100), nullable=True)
-    capture_date = Column(TIMESTAMP, nullable=True)
     
+    # 【新增字段】
+    # 拍摄时间 (默认为上传时间，后续可通过EXIF提取)
+    capture_date = Column(TIMESTAMP, server_default=func.now()) 
+    # 拍摄地点 (如: Tokyo, Japan)
+    location = Column(String(255), nullable=True)
+    # 图片类型 (用户可选: 人像, 风景, 美食, 文字, 其他)
+    category = Column(String(50), default="其他")
+    # 浏览次数 (用于轮播图排序)
+    view_count = Column(Integer, default=0)
+
     owner_id = Column(BigInteger, ForeignKey("users.id"))
     created_at = Column(TIMESTAMP, server_default=func.now())
 
-    # 关联关系
     owner = relationship("User", back_populates="images")
-    
-    # 【新增】标签关联 (secondary 指向中间表)
     tags = relationship("Tag", secondary=image_tags, back_populates="images")
