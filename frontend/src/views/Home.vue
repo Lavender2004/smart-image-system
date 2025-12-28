@@ -13,7 +13,9 @@ const searchValue = ref('');
 // ⚠️ 请确认 IP 地址是否正确
 const API_BASE_URL = 'http://192.168.126.130:8000'; 
 
-// 排序
+// === AI 搜索开关 ===
+const isSmartSearch = ref(false);
+
 const sortValue = ref('date_desc');
 const sortOptions = [
   { text: '按时间倒序', value: 'date_desc' },
@@ -22,14 +24,11 @@ const sortOptions = [
   { text: '按名称排序', value: 'name_asc' },
 ];
 
-// 状态变量
 const showUploadDialog = ref(false);
 const fileList = ref([]);
 const showDetailDialog = ref(false);
 const currentImage = ref({});
 const newTag = ref('');
-
-// === 信息编辑模式相关 ===
 const isInfoEditing = ref(false); 
 const editForm = ref({ filename: '', location: '', category: '', capture_date: '' });
 const showCategoryPicker = ref(false);
@@ -41,33 +40,61 @@ const categoryOptions = [
   { text: '其他', value: '其他' },
 ];
 
-// === 图片裁剪编辑器相关 ===
 const showCropperDialog = ref(false); 
 const cropperRef = ref(null);         
 const cropOption = reactive({
-  img: '',             
-  outputSize: 1,       
-  outputType: 'jpeg',  
-  canMove: true,       
-  canMoveBox: true,    
-  original: false,     
-  viewport: true,      
-  centerBox: true,     
-  high: true,          
-  mode: 'contain',     
+  img: '', outputSize: 1, outputType: 'jpeg', canMove: true, canMoveBox: true, original: false, viewport: true, centerBox: true, high: true, mode: 'contain',     
 });
 
-
-// =======================
-// 数据获取
-// =======================
+// ===========================================
+// 数据获取 (【关键修改】修复 Loading 不消失问题)
+// ===========================================
 const getImages = async () => {
+  let loadingToast = null; // 用来存 Loading 实例
   try {
-    const res = await request.get('/api/v1/images', {
-      params: { tag: searchValue.value, sort_by: sortValue.value }
-    });
-    images.value = res;
-  } catch (error) { console.error(error); }
+    let res;
+    // 如果开启了 AI 搜且有关键词
+    if (isSmartSearch.value && searchValue.value.trim()) {
+       // 打开 Loading，并赋值给变量
+       loadingToast = showToast({ 
+         message: 'AI 正在思考...', 
+         type: 'loading', 
+         duration: 0, // 0 表示一直显示，直到手动关闭
+         forbidClick: true 
+       });
+       
+       // 等待后端返回
+       res = await request.get('/api/v1/search/smart', {
+         params: { query: searchValue.value }
+       });
+       
+    } else {
+       // 普通搜索
+       res = await request.get('/api/v1/images', {
+         params: { tag: searchValue.value, sort_by: sortValue.value }
+       });
+    }
+
+    // 更新数据
+    images.value = Array.isArray(res) ? res : [];
+
+    // 如果结果为空，提示一下
+    if (images.value.length === 0 && searchValue.value) {
+        showToast('未找到相关图片');
+    }
+
+  } catch (error) {
+    console.error(error);
+    showFailToast('请求失败');
+  } finally {
+    // 【关键】finally 块里的代码，无论成功失败都会执行
+    // 强制关闭 Loading
+    if (loadingToast) {
+      loadingToast.close();
+    } else {
+      showToast.clear();
+    }
+  }
 };
 
 const getTopImages = async () => {
@@ -125,11 +152,10 @@ const onCategoryConfirm = ({ selectedOptions }) => {
 };
 
 // =======================
-// 图片裁剪逻辑
+// 图片编辑器逻辑
 // =======================
-
 const openEditor = () => {
-  // 添加时间戳，防止浏览器缓存旧的跨域状态
+  // 加时间戳防止跨域缓存
   const timestamp = new Date().getTime();
   cropOption.img = `${API_BASE_URL}/${currentImage.value.file_path}?t=${timestamp}`;
   showCropperDialog.value = true;
@@ -140,8 +166,6 @@ const rotateRight = () => { cropperRef.value.rotateRight(); };
 
 const finishCrop = () => {
   showToast({ message: '处理中...', type: 'loading', duration: 0 });
-  
-  // 此时因为配置了 crossorigin，getCropBlob 应该能正常工作
   cropperRef.value.getCropBlob(async (data) => {
     try {
       const newFileName = `edited_${currentImage.value.filename}`;
@@ -151,18 +175,13 @@ const finishCrop = () => {
       
       await request.post('/api/v1/upload', formData);
       
-      showSuccessToast('编辑并保存为新图成功');
+      showSuccessToast('保存成功');
       showCropperDialog.value = false; 
       showDetailDialog.value = false;  
-      getImages();     
-      getTopImages();  
-    } catch (error) {
-      showFailToast('保存失败');
-      console.error(error);
-    }
+      getImages(); getTopImages();  
+    } catch (error) { showFailToast('保存失败'); }
   });
 };
-
 
 // =======================
 // 标签与通用逻辑
@@ -196,10 +215,10 @@ const handleUpload = async () => {
     const formData = new FormData();
     formData.append('file', fileList.value[0].file);
     await request.post('/api/v1/upload', formData);
-    showSuccessToast('上传成功');
+    showSuccessToast('上传成功，AI正在后台识别...'); 
     showUploadDialog.value = false;
     fileList.value = [];
-    getImages(); getTopImages();
+    setTimeout(() => { getImages(); getTopImages(); }, 2000); 
   } catch (error) { showFailToast('上传失败'); }
 };
 
@@ -213,10 +232,7 @@ const handleDelete = () => {
     }).catch(() => {});
 };
 
-const handleLogout = () => {
-  localStorage.removeItem('token');
-  router.push('/login');
-};
+const handleLogout = () => { localStorage.removeItem('token'); router.push('/login'); };
 
 onMounted(() => { getImages(); getTopImages(); });
 </script>
@@ -236,7 +252,18 @@ onMounted(() => { getImages(); getTopImages(); });
 
     <van-sticky :offset-top="46">
       <div class="search-bar-wrapper">
-        <van-search v-model="searchValue" placeholder="搜标签/地点/名称" @search="onSearch" style="flex: 1" />
+        <van-search
+          v-model="searchValue"
+          :placeholder="isSmartSearch ? 'AI 模式: 搜草坪、风景...' : '普通模式: 搜标签'"
+          @search="onSearch"
+          style="flex: 1"
+        />
+        
+        <div style="display: flex; align-items: center; margin-right: 10px;">
+            <span style="font-size: 12px; color: #666; margin-right: 4px;">AI搜</span>
+            <van-switch v-model="isSmartSearch" size="20px" @change="onSearch" />
+        </div>
+
         <van-dropdown-menu>
           <van-dropdown-item v-model="sortValue" :options="sortOptions" @change="onSortChange" />
         </van-dropdown-menu>
@@ -265,15 +292,9 @@ onMounted(() => { getImages(); getTopImages(); });
       </div>
     </van-dialog>
 
-    <van-dialog 
-      v-model:show="showDetailDialog" 
-      :title="isInfoEditing ? '编辑信息' : '图片详情'"
-      :show-confirm-button="false"
-      close-on-click-overlay
-    >
+    <van-dialog v-model:show="showDetailDialog" :title="isInfoEditing ? '编辑信息' : '图片详情'" :show-confirm-button="false" close-on-click-overlay>
       <div class="detail-content">
         <van-image v-if="currentImage.file_path" width="100%" fit="contain" :src="`${API_BASE_URL}/${currentImage.file_path}`" style="max-height: 300px; background: #000;" />
-        
         <div v-if="!isInfoEditing" style="margin-top: 15px;">
             <h3 style="margin:0; font-size:16px;">{{ currentImage.filename }}</h3>
             <div class="info-block">
@@ -282,44 +303,24 @@ onMounted(() => { getImages(); getTopImages(); });
                 <p>📂 {{ currentImage.category || '未分类' }}</p>
                 <p>🔥 {{ currentImage.view_count }} 次浏览</p>
             </div>
-
             <div style="margin: 10px 0;">
                 <span style="font-size:12px; color:#999;">标签: </span>
-                <van-tag 
-                  v-for="tag in currentImage.tags" 
-                  :key="tag.id" 
-                  closeable
-                  size="medium" 
-                  type="primary" 
-                  plain
-                  style="margin-right:6px; margin-bottom:4px;"
-                  @close="removeTag(tag.id)"
-                >
-                  {{ tag.name }}
-                </van-tag>
+                <van-tag v-for="tag in currentImage.tags" :key="tag.id" closeable size="medium" type="primary" plain style="margin-right:6px; margin-bottom:4px;" @close="removeTag(tag.id)">{{ tag.name }}</van-tag>
             </div>
-            
              <van-field v-model="newTag" center clearable placeholder="输入新标签" style="padding:0; margin-bottom:10px;">
                 <template #button><van-button size="small" type="primary" @click="handleAddTag">贴标签</van-button></template>
             </van-field>
-
             <div style="display: flex; gap: 10px; flex-wrap: wrap;">
                 <van-button icon="photograph" block type="warning" size="small" @click="openEditor">修图 / 裁剪</van-button>
                 <van-button icon="edit" block type="primary" plain size="small" @click="startInfoEdit">编辑信息</van-button>
                 <van-button icon="delete" block type="danger" plain size="small" @click="handleDelete">删除图片</van-button>
             </div>
         </div>
-
         <div v-else style="margin-top: 15px;">
             <van-cell-group inset>
                 <van-field v-model="editForm.filename" label="名称" />
                 <van-field v-model="editForm.location" label="地点" />
-                <van-field 
-                   v-model="editForm.category" 
-                   is-link readonly 
-                   label="分类" 
-                   @click="showCategoryPicker = true" 
-                />
+                <van-field v-model="editForm.category" is-link readonly label="分类" @click="showCategoryPicker = true" />
             </van-cell-group>
             <div style="display: flex; gap: 10px; margin-top: 15px;">
                 <van-button block type="default" size="small" @click="isInfoEditing = false">取消</van-button>
@@ -333,30 +334,11 @@ onMounted(() => { getImages(); getTopImages(); });
       <van-picker :columns="categoryOptions" @cancel="showCategoryPicker = false" @confirm="onCategoryConfirm" />
     </van-popup>
 
-    <van-dialog 
-      v-model:show="showCropperDialog" 
-      title="图片编辑器" 
-      :show-confirm-button="false"
-      close-on-click-overlay
-      style="width: 95%; max-width: 600px;"
-    >
+    <van-dialog v-model:show="showCropperDialog" title="图片编辑器" :show-confirm-button="false" close-on-click-overlay style="width: 95%; max-width: 600px;">
       <div class="editor-container" v-if="showCropperDialog">
         <div class="cropper-wrapper">
-          <vue-cropper
-            ref="cropperRef"
-            :img="cropOption.img"
-            :outputSize="cropOption.outputSize"
-            :outputType="cropOption.outputType"
-            :canMove="cropOption.canMove"
-            :canMoveBox="cropOption.canMoveBox"
-            :original="cropOption.original"
-            :autoCrop="true"
-            :fixed="false"
-            :centerBox="cropOption.centerBox"
-            :img-props="{ crossorigin: 'anonymous' }"
-          ></vue-cropper>
+          <vue-cropper ref="cropperRef" :img="cropOption.img" :outputSize="cropOption.outputSize" :outputType="cropOption.outputType" :canMove="cropOption.canMove" :canMoveBox="cropOption.canMoveBox" :original="cropOption.original" :autoCrop="true" :fixed="false" :centerBox="cropOption.centerBox" :img-props="{ crossorigin: 'anonymous' }"></vue-cropper>
         </div>
-
         <div class="editor-toolbar">
           <van-button icon="replay" size="small" @click="rotateLeft">左旋</van-button>
           
@@ -370,7 +352,6 @@ onMounted(() => { getImages(); getTopImages(); });
         </div>
       </div>
     </van-dialog>
-
   </div>
 </template>
 
@@ -385,15 +366,8 @@ onMounted(() => { getImages(); getTopImages(); });
 .info-block p { margin: 4px 0; font-size: 13px; color: #666; }
 .float-btn { position: fixed; bottom: 30px; right: 30px; width: 50px; height: 50px; background-color: #1989fa; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 100; cursor: pointer; transition: transform 0.2s; }
 .detail-content { padding: 10px 20px 20px 20px; }
-
-/* 编辑器样式 */
 .editor-container { height: 500px; display: flex; flex-direction: column; }
 .cropper-wrapper { flex: 1; width: 100%; background: #333; position: relative; }
 .editor-toolbar { height: 60px; display: flex; align-items: center; padding: 0 15px; gap: 10px; background: #fff; border-top: 1px solid #eee; }
-
-/* 水平翻转图标 */
-.icon-flip {
-  transform: scaleX(-1);
-  display: inline-block; /* 确保 transform 生效 */
-}
+.icon-flip { transform: scaleX(-1); display: inline-block; }
 </style>
