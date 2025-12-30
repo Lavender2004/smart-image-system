@@ -3,6 +3,7 @@
   line-height: 1.5;
   font-weight: 400;
 
+  /* 基础文字颜色 */
   color-scheme: light dark;
   color: rgba(255, 255, 255, 0.87);
   background-color: #242424;
@@ -13,6 +14,29 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* 🔴 修复 1：重置 Body，去掉居中和 Flex 布局 */
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  min-height: 100vh;
+  /* 防止 iOS 点击高亮 */
+  -webkit-tap-highlight-color: transparent;
+  /* 确保没有默认的横向滚动 */
+  overflow-x: hidden;
+  display: block; /* 覆盖掉原本的 flex */
+}
+
+/* 🔴 修复 2：重置 App 容器，去掉 padding 和限制 */
+#app {
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  padding: 0; /* 去掉原本的 2rem padding，让轮播图能贴边 */
+  text-align: left; /* 恢复默认对齐 */
+}
+
+/* 保留原有的链接样式 */
 a {
   font-weight: 500;
   color: #646cff;
@@ -22,19 +46,7 @@ a:hover {
   color: #535bf2;
 }
 
-body {
-  margin: 0;
-  display: flex;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
-}
-
-h1 {
-  font-size: 3.2em;
-  line-height: 1.1;
-}
-
+/* 简单的按钮样式（可以保留或删除，看你组件内是否用到原生button） */
 button {
   border-radius: 8px;
   border: 1px solid transparent;
@@ -54,17 +66,7 @@ button:focus-visible {
   outline: 4px auto -webkit-focus-ring-color;
 }
 
-.card {
-  padding: 2em;
-}
-
-#app {
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: 2rem;
-  text-align: center;
-}
-
+/* 浅色模式适配 */
 @media (prefers-color-scheme: light) {
   :root {
     color: #213547;

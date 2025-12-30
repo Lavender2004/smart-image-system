@@ -15,20 +15,20 @@ models.Base.metadata.create_all(bind=database.engine)
 
 app = FastAPI(title="Smart Image System")
 
-# CORS 配置
+# =======================
+# CORS 配置 (只保留这一处配置)
+# =======================
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    # 允许所有来源（FastAPI 会自动处理 Credentials 时的 Origin 限制）
+    allow_origins=["*"], 
+    allow_credentials=True, # 允许前端携带 Token/Cookies
+    allow_methods=["*"],    # 允许所有方法 (GET, POST, PUT, DELETE...)
+    allow_headers=["*"],    # 允许所有 Header
 )
 
-@app.middleware("http")
-async def add_cors_header(request: Request, call_next):
-    response = await call_next(request)
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    return response
+# ❌ 【已删除】原有的 add_cors_header 中间件
+# 那个中间件会覆盖正确的 CORS 头，导致手机端无法登录
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
@@ -133,7 +133,6 @@ def smart_search(
     if not query.strip(): return []
 
     # 1. 捞取用户所有图片 (轻量级查询)
-    # 只要图片不是成千上万张，这个查询非常快
     all_images = db.query(models.Image).filter(models.Image.owner_id == current_user.id).all()
     
     if not all_images:
@@ -154,14 +153,12 @@ def smart_search(
     print(f"📤 [Search] 正在让 AI 评审 {len(images_payload)} 张图片...")
 
     # 3. 调用 AI 打分排序
-    # 返回的是排好序的 ID 列表，比如 [5, 2, 8]
     sorted_ids = ai_service.rank_images_by_relevance(query, images_payload)
 
     if not sorted_ids:
         return []
 
     # 4. 根据 ID 列表取回完整对象，并保持顺序
-    # SQL 的 IN 查询不保证顺序，所以我们在内存里排
     result_images = db.query(models.Image).filter(models.Image.id.in_(sorted_ids)).all()
     
     img_map = {img.id: img for img in result_images}
