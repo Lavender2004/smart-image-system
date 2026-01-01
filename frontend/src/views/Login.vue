@@ -24,17 +24,14 @@ const handleLogin = async () => {
     localStorage.setItem('token', res.access_token);
     showSuccessToast('欢迎回来！');
     
-    // 稍微延迟跳转，让用户看清提示
     setTimeout(() => {
       router.push('/');
     }, 500);
     
   } catch (error) {
     console.error('Login Error:', error);
-    // 尝试获取后端返回的具体错误信息
     const errorMsg = error.response?.data?.detail || '';
     
-    // 针对常见的后端英文错误进行汉化 (假设后端是 FastAPI/Python)
     if (error.response?.status === 401 || errorMsg.includes('Incorrect')) {
       showFailToast('用户名或密码错误');
     } else if (error.response?.status === 404) {
@@ -49,7 +46,7 @@ const handleLogin = async () => {
 <template>
   <div class="login-container">
     <div class="content-wrapper">
-      <h2 class="title">Smart Image System</h2>
+      <h2 class="title">云相册</h2>
       
       <van-cell-group inset>
         <van-field
@@ -87,14 +84,12 @@ const handleLogin = async () => {
   min-height: 100vh;
   background-color: #f7f8fa;
   padding-top: 100px;
-  /* 关键布局：让内部内容水平居中 */
   display: flex;
   justify-content: center;
 }
 
 .content-wrapper {
   width: 100%;
-  /* 限制最大宽度，防止在大屏上无限拉伸 */
   max-width: 480px; 
 }
 

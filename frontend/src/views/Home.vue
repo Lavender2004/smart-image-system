@@ -3,31 +3,25 @@ import { ref, reactive, nextTick, onMounted, watch } from 'vue';
 import request from '../utils/request';
 import { useRouter } from 'vue-router';
 import { 
-  showToast, showSuccessToast, showFailToast, showConfirmDialog 
+  showToast, showSuccessToast, showFailToast, showConfirmDialog, showImagePreview 
 } from 'vant';
 import 'vue-cropper/dist/index.css'
 import { VueCropper }  from "vue-cropper";
 
-// ================= 全局配置 =================
 const router = useRouter();
-// ⚠️ 请根据你的实际 IP 修改这里
-const API_BASE_URL = 'http://10.193.69.228:8000'; 
+const API_BASE_URL = ''; 
 
-// ================= 状态管理 =================
 const activeTab = ref('gallery'); 
 const isDarkMode = ref(false);    
 const isSearchSticky = ref(false);
 
-// --- 图库数据 ---
-const images = ref([]);            
+const images = ref([]);             
 const topImages = ref([]);        
 const searchValue = ref('');
 
-// --- 上传相关 ---
 const showUploadDialog = ref(false);
 const fileList = ref([]); 
 
-// --- 详情相关 ---
 const showDetailDialog = ref(false);
 const currentImage = ref({});
 const isInfoEditing = ref(false);
@@ -40,71 +34,53 @@ const categoryOptions = [
   { text: '美食', value: '美食' }, { text: '文字', value: '文字' }, { text: '其他', value: '其他' }
 ];
 
-// ==========================================
-// 🎨 编辑器核心逻辑
-// ==========================================
+const showCloudAlbumPicker = ref(false); 
+
 const showCropperDialog = ref(false);
-const editorStep = ref(1); // 1: 裁剪/旋转, 2: 调色
+const editorStep = ref(1); 
 const cropperRef = ref(null);
 const canvasRef = ref(null);
-const cropKey = ref(0); // 强制刷新组件的 Key
+const cropKey = ref(0); 
 
-// 裁剪配置
 const cropOption = reactive({
   img: '', 
   outputSize: 1, 
   outputType: 'jpeg', 
-  canMove: true,           
+  canMove: true,            
   canMoveBox: true,        
   original: false, 
   viewport: true, 
-  
-  // 🔥 核心修改：centerBox 限制截图框只能在图片内拖动
   centerBox: true,        
-  
   high: true, 
   mode: 'contain',
-  autoCrop: true,          
-  
-  // ❌ 删除固定的 300px 宽高，防止旋转后图片变窄导致截图框超出
-  // autoCropWidth: 300,    
-  // autoCropHeight: 300,
-  
-  // ✅ 新增/保留配置
+  autoCrop: true,            
   fixedBox: false,
-  full: true,      // 输出原图比例，保证清晰度
-  infoTrue: true   // 展示真实输出尺寸，有助于移动端计算边界
+  full: true,      
+  infoTrue: true    
 });
 
-// 调色状态
 const editConfig = reactive({
-  brightness: 100, // 亮度 %
-  contrast: 100,   // 对比度 %
-  saturate: 100,   // 饱和度 %
+  brightness: 100, 
+  contrast: 100,   
+  saturate: 100,   
 });
 
 let tempCroppedImg = null;    
 
-// 打开编辑器
 const openEditor = () => {
   showCropperDialog.value = true;
-  
-  // 重置状态
   editorStep.value = 1;
   editConfig.brightness = 100;
   editConfig.contrast = 100;
   editConfig.saturate = 100;
   
-  // 强制刷新组件
-  cropKey.value++; 
-
-  nextTick(() => {
+  setTimeout(() => {
+    cropKey.value++; 
     const timestamp = new Date().getTime();
     cropOption.img = `${API_BASE_URL}/${currentImage.value.file_path}?t=${timestamp}`;
-  });
+  }, 200);
 };
 
-// 确认裁剪
 const confirmCropToEdit = () => {
   if (!cropperRef.value) {
       showFailToast('编辑器未就绪，请重试');
@@ -131,10 +107,9 @@ const confirmCropToEdit = () => {
 
     img.onload = () => {
       tempCroppedImg = img;
-      editorStep.value = 2; // 切换步骤
+      editorStep.value = 2; 
       loadingToast.close();
       
-      // 等待 DOM 切换完成后渲染 Canvas
       nextTick(() => {
         renderCanvas();
         URL.revokeObjectURL(blobUrl); 
@@ -145,13 +120,11 @@ const confirmCropToEdit = () => {
   });
 };
 
-// 渲染 Canvas (仅滤镜)
 const renderCanvas = () => {
   const canvas = canvasRef.value;
   if (!canvas || !tempCroppedImg) return;
   const ctx = canvas.getContext('2d');
 
-  // 确保 Canvas 内部像素尺寸与图片一致（高分辨率）
   if (canvas.width !== tempCroppedImg.width || canvas.height !== tempCroppedImg.height) {
      canvas.width = tempCroppedImg.width;
      canvas.height = tempCroppedImg.height;
@@ -159,13 +132,11 @@ const renderCanvas = () => {
 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  // 绘制应用了滤镜的底图
   ctx.filter = `brightness(${editConfig.brightness}%) contrast(${editConfig.contrast}%) saturate(${editConfig.saturate}%)`;
   ctx.drawImage(tempCroppedImg, 0, 0);
   ctx.filter = 'none'; 
 };
 
-// 保存
 const saveFinalImage = () => {
   const canvas = canvasRef.value;
   canvas.toBlob(async (blob) => {
@@ -194,24 +165,15 @@ watch(() => [editConfig.brightness, editConfig.contrast, editConfig.saturate], (
 const rotateLeft = () => {
   if (!cropperRef.value) return;
   cropperRef.value.rotateLeft();
-  // 核心修复：旋转后，等待 DOM 更新，然后重置截图框大小
-  // goAutoCrop() 会让截图框重新适应旋转后的图片宽高，避免超出边界产生黑边
-  nextTick(() => {
-    cropperRef.value.goAutoCrop();
-  });
+  nextTick(() => { cropperRef.value.goAutoCrop(); });
 };
 
 const rotateRight = () => {
   if (!cropperRef.value) return;
   cropperRef.value.rotateRight();
-  // 同上，强制重置截图框
-  nextTick(() => {
-    cropperRef.value.goAutoCrop();
-  });
+  nextTick(() => { cropperRef.value.goAutoCrop(); });
 };
-// ==========================================
-// 🛠 工具函数 
-// ==========================================
+
 const stripExt = (filename) => {
   if (!filename) return '';
   return filename.replace(/\.[^/.]+$/, "");
@@ -239,14 +201,11 @@ watch(isDarkMode, (newVal) => {
   }
 }, { immediate: true });
 
-// ==========================================
-// 🧠 核心逻辑: AI 助手 
-// ==========================================
 const chatInput = ref('');
 const chatListRef = ref(null);
 const initialAiMsg = { 
     type: 'ai', 
-    content: '👋 你好！我是你的智能相册助手。\n你可以描述图片内容，或者上传图片让我分析。', 
+    content: '你好！我是你的智能相册助手。\n你可以描述图片内容，或者点击左侧图标从相册选一张图让我分析。', 
     images: [] 
 };
 const chatHistory = ref([ initialAiMsg ]);
@@ -324,9 +283,47 @@ const loadNextBatchToChat = (messageObj) => {
   return true;
 };
 
-// ==========================================
-// 📤 批量上传
-// ==========================================
+const handleSelectFromPicker = async (img) => {
+  showCloudAlbumPicker.value = false; 
+
+  chatHistory.value.push({ 
+    type: 'user-image', 
+    content: `${API_BASE_URL}/${img.file_path}` 
+  });
+  scrollToBottom();
+
+  chatHistory.value.push({ 
+    type: 'ai', 
+    content: '正在分析云端原图...', 
+    loading: true 
+  });
+  scrollToBottom();
+
+  try {
+    const res = await request.post(`/api/v1/chat/describe/${img.id}`, null, {
+      timeout: 60000 
+    });
+
+    const lastMsg = chatHistory.value[chatHistory.value.length - 1];
+    lastMsg.loading = false;
+    lastMsg.content = res.description || '分析完成。';
+    scrollToBottom();
+  } catch (error) {
+    const lastMsg = chatHistory.value[chatHistory.value.length - 1];
+    lastMsg.loading = false;
+    
+    if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
+        lastMsg.content = 'AI 思考时间过长，请稍后再试。';
+    } else {
+        lastMsg.content = '分析失败，请检查网络或后端状态。';
+    }
+  }
+};
+
+const showPreview = (url) => {
+    showImagePreview([url]);
+};
+
 const handleBatchUpload = async () => {
   if (fileList.value.length === 0) { showToast('请至少选择一张图片'); return; }
   const total = fileList.value.length;
@@ -357,9 +354,6 @@ const handleBatchUpload = async () => {
   finally { loading.clear(); }
 };
 
-// ==========================================
-// 🌙 UI 与 业务逻辑
-// ==========================================
 const toggleTheme = () => { isDarkMode.value = !isDarkMode.value; };
 
 const getImages = async () => {
@@ -531,23 +525,50 @@ onMounted(() => { getImages(); getTopImages(); });
 
       <div v-show="activeTab === 'chat'" class="chat-view">
         <div class="chat-list" ref="chatListRef">
-           <div v-for="(msg, idx) in chatHistory" :key="idx" class="chat-item" :class="msg.type">
+           <div v-for="(msg, idx) in chatHistory" :key="idx" class="chat-item" :class="msg.type === 'user-image' ? 'user' : msg.type">
              <div class="content-wrapper">
-                 <div class="bubble">
+                 
+                 <div v-if="msg.type !== 'user-image'" class="bubble">
                     <div v-if="msg.loading" class="typing-indicator"><span>.</span><span>.</span><span>.</span></div>
                     <span v-else>{{ msg.content }}</span>
                  </div>
+
+                 <div v-else class="chat-user-image">
+                    <van-image 
+                      :src="msg.content" 
+                      width="120" 
+                      height="120" 
+                      fit="cover" 
+                      radius="12"
+                      @click="showPreview(msg.content)"
+                      style="border: 2px solid #fff; box-shadow: 0 4px 12px rgba(0,0,0,0.1);"
+                    />
+                 </div>
+
                  <div v-if="msg.images && msg.images.length > 0" class="chat-images">
                     <div v-for="img in msg.images" :key="img.id" class="chat-img-card" @click="openDetail(img)">
                        <van-image width="100%" height="80" fit="cover" :src="`${API_BASE_URL}/${img.thumbnail_path || img.file_path}`" radius="6" />
                        <div class="score-tag">{{ stripExt(img.filename) }}</div>
                     </div>
                  </div>
+
              </div>
            </div>
         </div>
+
         <div class="chat-input-area">
-           <van-field v-model="chatInput" center clearable placeholder="描述你想找的图片..." @keydown.enter="handleSendMessage">
+           <div class="icon-btn" @click="showCloudAlbumPicker = true">
+              <van-icon name="photo-o" size="24" color="#666"/>
+           </div>
+
+           <van-field 
+             v-model="chatInput" 
+             center 
+             clearable 
+             placeholder="描述你想找的图片..." 
+             @keydown.enter="handleSendMessage"
+             class="chat-input-field"
+           >
              <template #button>
                  <van-button size="small" type="primary" @click="handleSendMessage" :disabled="!chatInput" round>发送</van-button>
              </template>
@@ -555,6 +576,27 @@ onMounted(() => { getImages(); getTopImages(); });
         </div>
       </div>
     </div>
+
+    <van-popup v-model:show="showCloudAlbumPicker" position="bottom" round :style="{ height: '70%' }" class="cloud-picker-popup">
+        <div class="picker-header">
+            <span>选择一张云端图片</span>
+            <van-icon name="cross" @click="showCloudAlbumPicker = false" />
+        </div>
+        <div class="picker-content">
+            <van-grid :column-num="3" :gutter="8" square>
+                <van-grid-item v-for="img in images" :key="img.id" @click="handleSelectFromPicker(img)">
+                    <van-image 
+                        width="100%" 
+                        height="100%" 
+                        fit="cover" 
+                        :src="`${API_BASE_URL}/${img.thumbnail_path || img.file_path}`" 
+                        radius="4" 
+                    />
+                </van-grid-item>
+            </van-grid>
+            <van-empty v-if="images.length === 0" description="暂无云端图片" />
+        </div>
+    </van-popup>
 
     <van-tabbar v-model="activeTab" fixed safe-area-inset-bottom :border="false" class="glass-tabbar" z-index="1000">
       <van-tabbar-item name="gallery" icon="photo-o">相册</van-tabbar-item>
@@ -695,7 +737,6 @@ onMounted(() => { getImages(); getTopImages(); });
 </template>
 
 <style scoped>
-/* 基础样式保持不变... */
 .app-wrapper {
   min-height: 100vh;
   padding-bottom: 50px; 
@@ -728,7 +769,6 @@ onMounted(() => { getImages(); getTopImages(); });
 .logout-btn { font-size: 14px; color: #1989fa; cursor: pointer; font-weight: 500; }
 .dark-mode .logout-btn { color: #5aaaff; }
 
-/* 导航栏与Tabbar */
 .glass-nav :deep(.van-nav-bar__content),
 .glass-tabbar {
     background: rgba(255, 255, 255, 0.85);
@@ -743,7 +783,6 @@ onMounted(() => { getImages(); getTopImages(); });
     border-top: 1px solid rgba(255,255,255,0.05);
 }
 
-/* 轮播图 */
 .gallery-view { width: 100%; overflow: hidden; }
 .swiper-box { margin: 16px; border-radius: 16px; overflow: hidden; box-shadow: 0 8px 24px rgba(0,0,0,0.12); background: #000; position: relative; width: auto; max-width: calc(100vw - 32px); min-height: 200px; }
 .my-swipe { height: 260px; }
@@ -754,14 +793,12 @@ onMounted(() => { getImages(); getTopImages(); });
 .swiper-desc { position: absolute; bottom: 12px; left: 16px; right: 16px; color: #fff; z-index: 2; text-shadow: 0 2px 4px rgba(0,0,0,0.5); }
 .title { font-weight: 600; font-size: 16px; letter-spacing: 0.5px; }
 
-/* 筛选栏 */
 .filter-bar { display: flex; align-items: center; padding: 10px 16px; background: transparent; box-shadow: none; }
 .dark-mode .filter-bar { background: transparent; }
 :deep(.van-search__content) { background-color: #ffffff; box-shadow: 0 2px 6px rgba(0,0,0,0.03); border: 1px solid rgba(0,0,0,0.02); }
 .dark-mode :deep(.van-search__content) { background-color: #2c2c2e; box-shadow: none; border: 1px solid rgba(255,255,255,0.05); }
 .flex-search { flex: 1; padding: 0; margin-right: 0; }
 
-/* 网格 */
 .grid-box { padding: 8px 16px; margin-bottom: 20px;}
 .grid-card { overflow: visible; }
 .card-inner { width: 100%; background: #fff; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.04); transition: transform 0.2s; }
@@ -777,12 +814,10 @@ onMounted(() => { getImages(); getTopImages(); });
 .info-placeholder { height: 16px; }
 .mini-tag { border-radius: 4px; }
 
-/* FAB */
 .fab-btn { position: fixed; bottom: 80px; right: 24px; width: 56px; height: 56px; background: linear-gradient(135deg, #2979ff, #1565c0); border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 8px 20px rgba(41, 121, 255, 0.4); z-index: 90; }
 .fab-btn:active { transform: scale(0.9); }
 .dark-mode .fab-btn { background: linear-gradient(135deg, #0a84ff, #0056b3); }
 
-/* 聊天 */
 .chat-view { position: fixed; top: 46px; bottom: 50px; left: 0; right: 0; display: flex; flex-direction: column; background: #fff; z-index: 10; }
 .dark-mode .chat-view { background: #1c1c1e; }
 .chat-list { flex: 1; overflow-y: auto; padding: 20px 16px; scroll-behavior: smooth; }
@@ -801,7 +836,6 @@ onMounted(() => { getImages(); getTopImages(); });
 .dark-mode :deep(.van-field__control) { color: #fff; caret-color: #1989fa; }
 .score-tag { position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.6); color: #fff; font-size: 11px; padding: 4px 6px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-/* 详情 */
 .detail-img-box { background: #000; display: flex; justify-content: center; align-items: flex-start; width: 100%; max-height: 60vh; overflow-y: auto; overflow-x: hidden; }
 .info-panel { padding: 24px 20px; }
 .meta-header { display: flex; justify-content: space-between; font-size: 13px; color: #999; margin-bottom: 12px; }
@@ -837,19 +871,82 @@ onMounted(() => { getImages(); getTopImages(); });
 .dark-mode .edit-panel :deep(.van-cell) { background-color: #2c2c2e; color: #fff; }
 .dark-mode .edit-panel :deep(input::placeholder) { color: #666; }
 
-/* =========================================
-   🌟 编辑器样式调整
-   ========================================= */
+.chat-uploader, .icon-btn {
+  margin-right: 10px;
+  display: flex;
+  align-items: center;
+}
 
-/* 1. 覆盖 Vant Dialog 的默认宽度和背景 */
+.icon-btn {
+  width: 38px;
+  height: 38px;
+  background: #f7f8fa;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  border: 1px solid #ebedf0;
+  cursor: pointer;
+}
+.icon-btn:active {
+  background: #e0e0e0;
+  transform: scale(0.95);
+}
+.dark-mode .icon-btn {
+  background: #2c2c2e;
+  border-color: #3a3a3c;
+}
+.dark-mode .icon-btn .van-icon {
+  color: #fff !important;
+}
+
+.chat-input-field {
+  background: #f7f8fa;
+  border-radius: 24px;
+  padding: 4px 12px; 
+}
+.dark-mode .chat-input-field {
+  background: #2c2c2e;
+}
+.chat-user-image {
+  margin-bottom: 8px;
+  display: flex;
+  justify-content: flex-end; 
+}
+
+.picker-header {
+    padding: 16px;
+    font-weight: bold;
+    font-size: 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #eee;
+}
+.dark-mode .picker-header {
+    border-color: #333;
+    color: #fff;
+}
+.picker-content {
+    padding: 10px;
+    height: calc(100% - 50px);
+    overflow-y: auto;
+}
+.cloud-picker-popup {
+    background: #f7f8fa;
+}
+.dark-mode .cloud-picker-popup {
+    background: #1c1c1e;
+}
+
 .cropper-dialog {
    width: 90vw !important; 
    max-width: 600px;
-   background: #1c1c1e !important; /* 强制深色背景 */
+   background: #1c1c1e !important; 
    overflow: hidden;
 }
 
-/* 2. 外层容器：给予固定高度，解决 0x0 问题 */
 .cropper-wrapper-box {
    width: 100%;
    height: 70vh; 
@@ -865,17 +962,15 @@ onMounted(() => { getImages(); getTopImages(); });
    overflow: hidden;
 }
 
-/* 3. 画布区域：占据剩余空间 */
 .editor-canvas-area {
    flex: 1; 
    position: relative;
    width: 100%;
    background: #000;
    overflow: hidden;
-   min-height: 200px; /* 最小高度兜底 */
+   min-height: 200px; 
 }
 
-/* 涂鸦画布样式 */
 .centered-canvas {
    display: flex;
    justify-content: center;
@@ -889,7 +984,6 @@ onMounted(() => { getImages(); getTopImages(); });
    max-height: 100%;
 }
 
-/* 4. 工具栏：防止被压缩 */
 .editor-toolbar {
    flex-shrink: 0; 
    background: #1c1c1e;

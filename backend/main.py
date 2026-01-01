@@ -1,46 +1,53 @@
 import os
-from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Query, Request, BackgroundTasks
+import json
+from typing import List, Optional
+from datetime import timedelta
+
+from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Query, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.orm import Session
-from sqlalchemy import or_
-from datetime import timedelta
-from typing import List, Optional
 
-from . import models, schemas, security, database, utils, ai_service
+from sqlalchemy import create_engine, or_
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, Session
 
-# 初始化数据库
-models.Base.metadata.create_all(bind=database.engine)
+import models, schemas, security, database, utils, ai_service
+
+SQLALCHEMY_DATABASE_URL = "mysql+pymysql://sims_user:sims_password@db:3306/image_db"
+
+engine = create_engine(SQLALCHEMY_DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+models.Base.metadata.create_all(bind=engine)
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 app = FastAPI(title="Smart Image System")
 
-# =======================
-# CORS 配置 (只保留这一处配置)
-# =======================
 app.add_middleware(
     CORSMiddleware,
-    # 允许所有来源（FastAPI 会自动处理 Credentials 时的 Origin 限制）
     allow_origins=["*"], 
-    allow_credentials=True, # 允许前端携带 Token/Cookies
-    allow_methods=["*"],    # 允许所有方法 (GET, POST, PUT, DELETE...)
-    allow_headers=["*"],    # 允许所有 Header
+    allow_credentials=True, 
+    allow_methods=["*"],    
+    allow_headers=["*"],    
 )
-
-# ❌ 【已删除】原有的 add_cors_header 中间件
-# 那个中间件会覆盖正确的 CORS 头，导致手机端无法登录
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# =======================
-# 1. 认证接口
-# =======================
 @app.post("/api/v1/auth/register", response_model=schemas.UserResponse)
-def register(user: schemas.UserCreate, db: Session = Depends(database.get_db)):
+def register(user: schemas.UserCreate, db: Session = Depends(get_db)):
     if db.query(models.User).filter(models.User.email == user.email).first():
         raise HTTPException(status_code=400, detail="该邮箱已被注册")
     if db.query(models.User).filter(models.User.username == user.username).first():
         raise HTTPException(status_code=400, detail="该用户名已被占用")
+    
     hashed_password = security.get_password_hash(user.password)
     new_user = models.User(email=user.email, username=user.username, password_hash=hashed_password)
     db.add(new_user)
@@ -49,25 +56,20 @@ def register(user: schemas.UserCreate, db: Session = Depends(database.get_db)):
     return new_user
 
 @app.post("/api/v1/auth/login", response_model=schemas.Token)
-def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(database.get_db)):
+def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = db.query(models.User).filter(models.User.username == form_data.username).first()
     if not user or not security.verify_password(form_data.password, user.password_hash):
         raise HTTPException(status_code=400, detail="用户名或密码错误")
+    
     access_token = security.create_access_token(data={"sub": user.username})
     return {"access_token": access_token, "token_type": "bearer"}
 
-# =======================
-# 2. 图片上传 (含 AI 后台任务)
-# =======================
-
 def bg_generate_tags(image_id: int, file_path: str, db: Session):
-    """后台任务：调用 AI 打标签"""
-    print(f"🤖 [AI] 开始分析图片 ID: {image_id} ...")
+    print(f"[AI] 开始分析图片 ID: {image_id} ...")
     tags = ai_service.generate_image_tags(file_path)
     
     if tags:
-        print(f"✅ [AI] 识别成功，标签: {tags}")
-        # 重新获取对象以防 Session 问题
+        print(f"[AI] 识别成功，标签: {tags}")
         image = db.query(models.Image).filter(models.Image.id == image_id).first()
         if image:
             for tag_name in tags:
@@ -82,14 +84,14 @@ def bg_generate_tags(image_id: int, file_path: str, db: Session):
                     image.tags.append(tag)
             db.commit()
     else:
-        print("⚠️ [AI] 未生成标签")
+        print("[AI] 未生成标签")
 
 @app.post("/api/v1/upload", response_model=schemas.ImageResponse)
 def upload_image(
     background_tasks: BackgroundTasks, 
     file: UploadFile = File(...), 
     current_user: models.User = Depends(security.get_current_user),
-    db: Session = Depends(database.get_db)
+    db: Session = Depends(get_db)
 ):
     if not file.content_type.startswith("image/"):
         raise HTTPException(400, detail="必须上传图片")
@@ -107,6 +109,7 @@ def upload_image(
         width=image_info["width"],
         height=image_info["height"],
         capture_date=image_info["capture_date"],
+        location=image_info.get("location"), 
         owner_id=current_user.id
     )
     db.add(db_image)
@@ -117,28 +120,42 @@ def upload_image(
 
     return db_image
 
-# =======================
-# 3. 智能搜索 (LLM Rerank 版本)
-# =======================
+@app.post("/api/v1/chat/describe/{image_id}")
+async def describe_cloud_image(
+    image_id: int,
+    current_user: models.User = Depends(security.get_current_user),
+    db: Session = Depends(get_db)
+):
+    image = db.query(models.Image).filter(models.Image.id == image_id, models.Image.owner_id == current_user.id).first()
+    if not image:
+        raise HTTPException(404, detail="图片不存在或无权访问")
+
+    if not os.path.exists(image.file_path):
+         raise HTTPException(404, detail="服务器磁盘上找不到该文件")
+
+    try:
+        description = ai_service.get_image_description(image.file_path)
+        return {
+            "description": description,
+            "image_url": f"/static/{image.filename}" 
+        }
+    except Exception as e:
+        print(f"Cloud Image Describe Error: {e}")
+        raise HTTPException(status_code=500, detail=f"AI 分析失败: {str(e)}")
+
 @app.get("/api/v1/search/smart", response_model=List[schemas.ImageResponse])
 def smart_search(
     query: str,
     current_user: models.User = Depends(security.get_current_user),
-    db: Session = Depends(database.get_db)
+    db: Session = Depends(get_db)
 ):
-    """
-    语义搜索 v2：全量上下文 + AI 评分排序
-    不需要 ChromaDB，直接让 GPT-4o-mini 根据标签和文件名判断相关性。
-    """
     if not query.strip(): return []
 
-    # 1. 捞取用户所有图片 (轻量级查询)
     all_images = db.query(models.Image).filter(models.Image.owner_id == current_user.id).all()
     
     if not all_images:
         return []
 
-    # 2. 构建 AI 简报 (只包含文本元数据，不包含图片内容，极省 Token)
     images_payload = []
     for img in all_images:
         tag_names = [t.name for t in img.tags]
@@ -150,17 +167,12 @@ def smart_search(
             "location": img.location
         })
 
-    print(f"📤 [Search] 正在让 AI 评审 {len(images_payload)} 张图片...")
-
-    # 3. 调用 AI 打分排序
     sorted_ids = ai_service.rank_images_by_relevance(query, images_payload)
 
     if not sorted_ids:
         return []
 
-    # 4. 根据 ID 列表取回完整对象，并保持顺序
     result_images = db.query(models.Image).filter(models.Image.id.in_(sorted_ids)).all()
-    
     img_map = {img.id: img for img in result_images}
     
     final_result = []
@@ -170,22 +182,19 @@ def smart_search(
             
     return final_result
 
-# =======================
-# 4. 基础接口 (保持不变)
-# =======================
 @app.get("/api/v1/images", response_model=List[schemas.ImageResponse])
 def get_my_images(
     tag: Optional[str] = None,
     sort_by: Optional[str] = Query("date_desc"),
     current_user: models.User = Depends(security.get_current_user),
-    db: Session = Depends(database.get_db)
+    db: Session = Depends(get_db)
 ):
     query = db.query(models.Image).filter(models.Image.owner_id == current_user.id)
     if tag:
         query = query.filter(
             (models.Image.tags.any(models.Tag.name.like(f"%{tag}%"))) |
             (models.Image.filename.like(f"%{tag}%")) | 
-            (models.Image.location.like(f"%{tag}%")) |
+            (models.Image.location.like(f"%{tag}%")) | 
             (models.Image.category.like(f"%{tag}%"))
         )
     if sort_by == "date_asc": query = query.order_by(models.Image.capture_date.asc())
@@ -195,7 +204,7 @@ def get_my_images(
     return query.all()
 
 @app.get("/api/v1/images/{image_id}", response_model=schemas.ImageResponse)
-def get_image_detail(image_id: int, current_user: models.User = Depends(security.get_current_user), db: Session = Depends(database.get_db)):
+def get_image_detail(image_id: int, current_user: models.User = Depends(security.get_current_user), db: Session = Depends(get_db)):
     image = db.query(models.Image).filter(models.Image.id == image_id).first()
     if not image: raise HTTPException(404, detail="Not Found")
     image.view_count += 1
@@ -204,7 +213,7 @@ def get_image_detail(image_id: int, current_user: models.User = Depends(security
     return image
 
 @app.put("/api/v1/images/{image_id}", response_model=schemas.ImageResponse)
-def update_image_info(image_id: int, info: schemas.ImageUpdate, current_user: models.User = Depends(security.get_current_user), db: Session = Depends(database.get_db)):
+def update_image_info(image_id: int, info: schemas.ImageUpdate, current_user: models.User = Depends(security.get_current_user), db: Session = Depends(get_db)):
     image = db.query(models.Image).filter(models.Image.id == image_id, models.Image.owner_id == current_user.id).first()
     if not image: raise HTTPException(404, detail="Not Found")
     if info.filename: image.filename = info.filename
@@ -216,7 +225,7 @@ def update_image_info(image_id: int, info: schemas.ImageUpdate, current_user: mo
     return image
 
 @app.delete("/api/v1/images/{image_id}/tags/{tag_id}")
-def delete_tag_from_image(image_id: int, tag_id: int, current_user: models.User = Depends(security.get_current_user), db: Session = Depends(database.get_db)):
+def delete_tag_from_image(image_id: int, tag_id: int, current_user: models.User = Depends(security.get_current_user), db: Session = Depends(get_db)):
     image = db.query(models.Image).filter(models.Image.id == image_id).first()
     tag = db.query(models.Tag).filter(models.Tag.id == tag_id).first()
     if image and tag and tag in image.tags:
@@ -225,7 +234,7 @@ def delete_tag_from_image(image_id: int, tag_id: int, current_user: models.User 
     return {"msg": "Deleted"}
 
 @app.post("/api/v1/images/{image_id}/tags", response_model=schemas.ImageResponse)
-def add_tag_to_image(image_id: int, tag_name: str, current_user: models.User = Depends(security.get_current_user), db: Session = Depends(database.get_db)):
+def add_tag_to_image(image_id: int, tag_name: str, current_user: models.User = Depends(security.get_current_user), db: Session = Depends(get_db)):
     image = db.query(models.Image).filter(models.Image.id == image_id).first()
     clean_name = tag_name.strip().lower()
     tag = db.query(models.Tag).filter(models.Tag.name == clean_name).first()
@@ -240,7 +249,7 @@ def add_tag_to_image(image_id: int, tag_name: str, current_user: models.User = D
     return image
 
 @app.delete("/api/v1/images/{image_id}", status_code=204)
-def delete_image(image_id: int, current_user: models.User = Depends(security.get_current_user), db: Session = Depends(database.get_db)):
+def delete_image(image_id: int, current_user: models.User = Depends(security.get_current_user), db: Session = Depends(get_db)):
     image = db.query(models.Image).filter(models.Image.id == image_id, models.Image.owner_id == current_user.id).first()
     if image:
         try:

@@ -5,14 +5,12 @@ from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
-from . import database, models
+import database, models
 
-# 配置信息
-SECRET_KEY = "week1_secret_key_change_me"
+SECRET_KEY = "test_for_smart_image_system"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
-# 定义 OAuth2 Scheme (告诉 FastAPI Token 在哪里找)
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -33,7 +31,6 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
-# 【新增】核心依赖：获取当前登录用户
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(database.get_db)):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,

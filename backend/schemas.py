@@ -2,15 +2,11 @@ from pydantic import BaseModel, EmailStr, Field, validator
 from datetime import datetime
 from typing import Optional, List
 
-# =======================
-# 用户相关 (Auth 增强)
-# =======================
 class UserCreate(BaseModel):
     username: str = Field(..., min_length=3, description="用户名至少3位")
     email: EmailStr
     password: str = Field(..., min_length=6, description="密码至少6位")
 
-    # 验证密码长度
     @validator('password')
     def validate_password(cls, v):
         if len(v) < 6:
@@ -29,9 +25,6 @@ class UserResponse(BaseModel):
     class Config:
         from_attributes = True
 
-# =======================
-# 标签
-# =======================
 class TagBase(BaseModel):
     name: str
 
@@ -40,18 +33,12 @@ class TagResponse(TagBase):
     class Config:
         from_attributes = True
 
-# =======================
-# 图片 (Week 4.5 升级)
-# =======================
-
-# 用于修改图片信息的模型 (PUT请求)
 class ImageUpdate(BaseModel):
     filename: Optional[str] = None
     capture_date: Optional[datetime] = None
     location: Optional[str] = None
     category: Optional[str] = None
 
-# 用于返回给前端的模型
 class ImageResponse(BaseModel):
     id: int
     filename: str
@@ -63,7 +50,6 @@ class ImageResponse(BaseModel):
     created_at: datetime
     owner_id: int
     
-    # 新增字段
     capture_date: Optional[datetime] = None
     location: Optional[str] = None
     category: Optional[str] = None
