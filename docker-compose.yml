@@ -1,9 +1,6 @@
 version: '3.8'
 
 services:
-  # ==============================
-  # 1. 核心数据库 (MySQL)
-  # ==============================
   db:
     image: mysql:8.0
     container_name: sims_mysql
@@ -23,45 +20,31 @@ services:
       timeout: 20s
       retries: 10
 
-  # ==============================
-  # 2. 后端服务 (FastAPI)
-  # ==============================
   backend:
     build: 
-      context: ./backend  # 指向后端代码目录
+      context: ./backend 
     container_name: sims_backend
     restart: always
     depends_on:
       db:
         condition: service_healthy
     environment:
-      # ⚠️ 注意：在 Docker 内部连接数据库，主机名必须写 service name，即 'db'，不是 'localhost'
       DATABASE_URL: mysql+pymysql://sims_user:sims_password@db:3306/image_db
-      OPENAI_API_KEY: ${OPENAI_API_KEY} # 读取系统环境变量或 .env
+      OPENAI_API_KEY: ${OPENAI_API_KEY} 
       OPENAI_BASE_URL: ${OPENAI_BASE_URL}
     ports:
-      - "8000:8000" # 暴露端口方便调试，生产环境可不暴露，只通过 Nginx 访问
+      - "8000:8000"
     volumes:
-      - ./storage/uploads:/app/static/uploads       # 挂载上传目录，防止重启丢失
-      - ./storage/thumbnails:/app/static/thumbnails # 挂载缩略图目录
+      - ./storage/uploads:/app/static/uploads      
+      - ./storage/thumbnails:/app/static/thumbnails
 
-  # ==============================
-  # 3. 前端服务 (Vue + Nginx)
-  # ==============================
   frontend:
     build:
-      context: ./frontend # 指向前端代码目录
+      context: ./frontend 
     container_name: sims_frontend
     restart: always
     depends_on:
       - backend
     ports:
-      - "80:80" # 浏览器访问 http://localhost 即可
+      - "80:80" 
 
-  # (可选) Redis，如果你代码里暂时没用 Redis，可以先注释掉，节省资源
-  # redis:
-  #   image: redis:7.0
-  #   container_name: sims_redis
-  #   restart: always
-  #   ports:
-  #     - "6379:6379"
