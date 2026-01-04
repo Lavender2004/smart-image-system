@@ -66,8 +66,11 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
 
 def bg_generate_tags(image_id: int, file_path: str, db: Session):
     print(f"[AI] 开始分析图片 ID: {image_id} ...")
-    tags = ai_service.generate_image_tags(file_path)
-    
+    try:
+        tags = ai_service.generate_image_tags(file_path)
+    except Exception:
+        return
+
     if tags:
         print(f"[AI] 识别成功，标签: {tags}")
         image = db.query(models.Image).filter(models.Image.id == image_id).first()
@@ -76,13 +79,21 @@ def bg_generate_tags(image_id: int, file_path: str, db: Session):
                 clean_name = tag_name.strip().lower()
                 tag = db.query(models.Tag).filter(models.Tag.name == clean_name).first()
                 if not tag:
-                    tag = models.Tag(name=clean_name)
-                    db.add(tag)
-                    db.commit()
-                    db.refresh(tag)
-                if tag not in image.tags:
+                    try:
+                        tag = models.Tag(name=clean_name)
+                        db.add(tag)
+                        db.commit()
+                        db.refresh(tag)
+                    except Exception:
+                        db.rollback()
+                        tag = db.query(models.Tag).filter(models.Tag.name == clean_name).first()
+                
+                if tag and tag not in image.tags:
                     image.tags.append(tag)
-            db.commit()
+            try:
+                db.commit()
+            except Exception:
+                db.rollback()
     else:
         print("[AI] 未生成标签")
 
@@ -239,10 +250,15 @@ def add_tag_to_image(image_id: int, tag_name: str, current_user: models.User = D
     clean_name = tag_name.strip().lower()
     tag = db.query(models.Tag).filter(models.Tag.name == clean_name).first()
     if not tag:
-        tag = models.Tag(name=clean_name)
-        db.add(tag)
-        db.commit()
-    if tag not in image.tags:
+        try:
+            tag = models.Tag(name=clean_name)
+            db.add(tag)
+            db.commit()
+        except Exception:
+            db.rollback()
+            tag = db.query(models.Tag).filter(models.Tag.name == clean_name).first()
+            
+    if tag and tag not in image.tags:
         image.tags.append(tag)
         db.commit()
         db.refresh(image)
